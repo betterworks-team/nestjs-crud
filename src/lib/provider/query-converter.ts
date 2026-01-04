@@ -3,7 +3,7 @@ import { Between, In, Like, ILike, MoreThan, MoreThanOrEqual, LessThan, LessThan
 
 import { FilterOperator } from '../interface/query-parser.interface';
 
-import type { FilterOperation, SortOperation, IncludeOperation, PageOperation, ParsedQuery } from '../interface/query-parser.interface';
+import type { FilterOperation, FilterItem, OrFilterOperation, SortOperation, IncludeOperation, PageOperation, ParsedQuery } from '../interface/query-parser.interface';
 import type { FindManyOptions, FindOptionsWhere, FindOptionsOrder, FindOptionsRelations, DataSource, Repository } from 'typeorm';
 
 export class QueryConverter<T = any> {
@@ -48,10 +48,36 @@ export class QueryConverter<T = any> {
         return options;
     }
 
-    private convertFiltersToWhere(filters: FilterOperation[]): FindOptionsWhere<T> {
-        const where: any = {};
+    private convertFiltersToWhere(filters: FilterItem[]): FindOptionsWhere<T> | FindOptionsWhere<T>[] {
+        const { andFilters, orFilters } = this.separateFiltersByType(filters);
+        const baseWhere = this.buildWhereFromAndFilters(andFilters);
+
+        if (orFilters.length === 0) {
+            return baseWhere;
+        }
+
+        return this.expandWhereWithOrFilters(baseWhere, orFilters);
+    }
+
+    private separateFiltersByType(filters: FilterItem[]): { andFilters: FilterOperation[]; orFilters: OrFilterOperation[] } {
+        const andFilters: FilterOperation[] = [];
+        const orFilters: OrFilterOperation[] = [];
 
         for (const filter of filters) {
+            if (this.isOrFilter(filter)) {
+                orFilters.push(filter);
+            } else {
+                andFilters.push(filter);
+            }
+        }
+
+        return { andFilters, orFilters };
+    }
+
+    private buildWhereFromAndFilters(andFilters: FilterOperation[]): any {
+        const where: any = {};
+
+        for (const filter of andFilters) {
             const fieldPath = filter.relation ? `${filter.field}.${filter.relation}` : filter.field;
             const whereCondition = this.convertFilterToCondition(filter);
 
@@ -61,6 +87,39 @@ export class QueryConverter<T = any> {
         }
 
         return where;
+    }
+
+    private expandWhereWithOrFilters(baseWhere: any, orFilters: OrFilterOperation[]): any[] {
+        let whereArray: any[] = [{ ...baseWhere }];
+
+        for (const orFilter of orFilters) {
+            const expandedWhere: any[] = [];
+
+            for (const baseCondition of whereArray) {
+                for (const filter of orFilter.filters) {
+                    const newWhere = this.deepClone(baseCondition);
+                    const fieldPath = filter.relation ? `${filter.field}.${filter.relation}` : filter.field;
+                    const whereCondition = this.convertFilterToCondition(filter);
+
+                    if (whereCondition !== undefined) {
+                        this.setNestedProperty(newWhere, fieldPath, whereCondition);
+                        expandedWhere.push(newWhere);
+                    }
+                }
+            }
+
+            whereArray = expandedWhere;
+        }
+
+        return whereArray;
+    }
+
+    private isOrFilter(filter: FilterItem): filter is OrFilterOperation {
+        return 'type' in filter && filter.type === 'or';
+    }
+
+    private deepClone<U>(obj: U): U {
+        return JSON.parse(JSON.stringify(obj));
     }
 
     private convertFilterToCondition(filter: FilterOperation): any {

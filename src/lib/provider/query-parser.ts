@@ -2,6 +2,8 @@ import { FilterOperator } from '../interface/query-parser.interface';
 
 import type {
     FilterOperation,
+    FilterItem,
+    OrFilterOperation,
     SortOperation,
     IncludeOperation,
     PageOperation,
@@ -21,16 +23,16 @@ export class QueryParser {
         };
     }
 
-    private parseFilters(query: Record<string, unknown>): FilterOperation[] {
-        const filters: FilterOperation[] = [];
+    private parseFilters(query: Record<string, unknown>): FilterItem[] {
+        const filters: FilterItem[] = [];
 
         for (const [key, value] of Object.entries(query)) {
             if (key.startsWith('filter[') && key.endsWith(']')) {
                 const filterKey = key.slice(7, -1); // remove 'filter[' and ']'
-                const filterOperation = this.parseFilterKey(filterKey, value);
+                const filterItem = this.parseFilterKey(filterKey, value);
 
-                if (filterOperation) {
-                    filters.push(filterOperation);
+                if (filterItem) {
+                    filters.push(filterItem);
                 }
             }
         }
@@ -38,7 +40,12 @@ export class QueryParser {
         return filters;
     }
 
-    private parseFilterKey(filterKey: string, value: unknown): FilterOperation | null {
+    private parseFilterKey(filterKey: string, value: unknown): FilterItem | null {
+        // Check for OR filter: field1||field2_operator
+        if (filterKey.includes('||')) {
+            return this.parseOrFilter(filterKey, value);
+        }
+
         // Find the last underscore to separate field from operator
         const lastUnderscoreIndex = filterKey.lastIndexOf('_');
 
@@ -57,6 +64,49 @@ export class QueryParser {
         }
 
         return this.createFilterOperation(field, operator, value);
+    }
+
+    private parseOrFilter(filterKey: string, value: unknown): OrFilterOperation | null {
+        // Format: field1||field2||field3_operator
+        // Example: title||workspace.name_ilike
+        const lastUnderscoreIndex = filterKey.lastIndexOf('_');
+        
+        let fields: string[];
+        let operator: FilterOperator;
+
+        if (lastUnderscoreIndex === -1) {
+            // No operator suffix, default to 'eq'
+            fields = filterKey.split('||');
+            operator = FilterOperator.EQ;
+        } else {
+            const fieldsStr = filterKey.slice(0, Math.max(0, lastUnderscoreIndex));
+            const operatorStr = filterKey.slice(Math.max(0, lastUnderscoreIndex + 1));
+
+            fields = fieldsStr.split('||');
+            operator = this.getFilterOperator(operatorStr) || FilterOperator.EQ;
+        }
+
+        const orFilters: FilterOperation[] = [];
+        for (const field of fields) {
+            const filterOp = this.createFilterOperation(field.trim(), operator, value);
+            if (filterOp) {
+                orFilters.push(filterOp);
+            }
+        }
+
+        if (orFilters.length === 0) {
+            return null;
+        }
+
+        // If only one filter passed allowedFilters, return it as a single filter
+        if (orFilters.length === 1) {
+            return { type: 'or', filters: orFilters };
+        }
+
+        return {
+            type: 'or',
+            filters: orFilters,
+        };
     }
 
     private createFilterOperation(field: string, operator: FilterOperator, value: unknown): FilterOperation | null {

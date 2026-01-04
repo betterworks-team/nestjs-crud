@@ -5,6 +5,11 @@ export interface FilterOperation {
     relation?: string; // for nested relations like "author.name"
 }
 
+export interface OrFilterOperation {
+    type: 'or';
+    filters: FilterOperation[];
+}
+
 export enum FilterOperator {
     // 동등/부등 비교
     EQ = 'eq', // equals
@@ -58,8 +63,10 @@ export interface PageOperation {
     cursor?: string; // for page[cursor]
 }
 
+export type FilterItem = FilterOperation | OrFilterOperation;
+
 export interface ParsedQuery {
-    filters: FilterOperation[];
+    filters: FilterItem[];
     sorts: SortOperation[];
     includes: IncludeOperation[];
     page?: PageOperation;

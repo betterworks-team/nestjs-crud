@@ -1,11 +1,11 @@
 {
-    "name": "@foryourdev/nestjs-crud",
-    "version": "0.3.21",
+    "name": "@betterworks-team/nestjs-crud",
+    "version": "0.4.0",
     "description": "Automatically generate CRUD Rest API based on NestJS and TypeOrm",
-    "homepage": "https://github.com/dev-jwshin/nestjs-crud",
+    "homepage": "https://github.com/betterworks-team/nestjs-crud",
     "repository": {
         "type": "git",
-        "url": "https://github.com/dev-jwshin/nestjs-crud"
+        "url": "https://github.com/betterworks-team/nestjs-crud"
     },
     "main": "dist/cjs/index.js",
     "module": "dist/mjs/index.js",
@@ -39,7 +39,7 @@
     ],
     "publishConfig": {
         "access": "public",
-        "registry": "https://registry.npmjs.org"
+        "registry": "https://npm.pkg.github.com"
     },
     "scripts": {
         "prepare": "husky",

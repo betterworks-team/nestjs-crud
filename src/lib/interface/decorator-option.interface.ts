@@ -66,8 +66,8 @@ export interface CrudOptions {
 
     /**
      * Skip validation of properties that do not exist in the validating object.
-     * This is useful for UPDATE operations where you want to validate only the provided fields.
-     * @default true for UPDATE operations, false for CREATE operations
+     * This is useful for write operations where you want to validate only the provided fields.
+     * @default true for CREATE/UPDATE/UPSERT operations
      */
     skipMissingProperties?: boolean;
 
@@ -228,7 +228,8 @@ export interface CrudOptions {
             /**
              * Skip validation of properties that do not exist in the validating object.
              * If not specified, uses the global skipMissingProperties from CrudOptions.
-             * @default false for CREATE operations
+             * Set to `false` to enforce strict required-field validation on CREATE.
+             * @default true for CREATE operations
              */
             skipMissingProperties?: boolean;
         } & RouteBaseOption &

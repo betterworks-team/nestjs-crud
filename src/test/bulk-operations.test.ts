@@ -112,9 +112,11 @@ describe('Bulk Operations Tests', () => {
         });
 
         it('should handle validation errors in bulk create', async () => {
+            // CREATE 기본값이 lenient(skipMissingProperties:true)이므로 "누락" 필드는 더 이상
+            // 검증 오류가 아니다. 전송된(present) 필드의 잘못된 값은 여전히 422로 거부된다.
             const users = [
                 { name: 'John Doe', email: 'john@example.com' },
-                { name: 'Jane Smith' }, // Missing email
+                { name: 'Jane Smith', email: 'not-an-email' }, // Invalid email format
                 { name: 'Bob Johnson', email: 'bob@example.com' },
             ];
 

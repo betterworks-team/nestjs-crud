@@ -92,8 +92,13 @@ export function CreateRequestInterceptor(crudOptions: CrudOptions, factoryOption
                 // 임포트 추가 필요하지만 일단 기존 검증 방식 사용하면서 로깅 강화
                 const transformed = plainToInstance(crudOptions.entity as ClassConstructor<EntityType>, body);
 
-                // Priority: method-specific > global > default (false for CREATE)
-                const skipMissingProperties = methodOptions.skipMissingProperties ?? crudOptions.skipMissingProperties ?? false;
+                // Priority: method-specific > global > default (true, aligned with UPDATE/UPSERT).
+                // CREATE validates the entity directly, and entity optional fields usually lack
+                // @IsOptional (the entity doubles as the persistence model), so a strict default
+                // (false) turns every missing field into a "required on create" error and breaks
+                // empty/partial creates. Consumers that need strict required-field enforcement can
+                // opt out per-route with `skipMissingProperties: false`.
+                const skipMissingProperties = methodOptions.skipMissingProperties ?? crudOptions.skipMissingProperties ?? true;
 
                 const errorList = await validate(transformed, {
                     whitelist: true,

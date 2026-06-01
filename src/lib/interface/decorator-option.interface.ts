@@ -232,6 +232,14 @@ export interface CrudOptions {
              * @default true for CREATE operations
              */
             skipMissingProperties?: boolean;
+
+            /**
+             * DTO class to validate the request body against, instead of the entity.
+             * Persistence still uses the entity (the DTO is a validation contract only).
+             * When set, CREATE defaults skipMissingProperties to false (strict) so that
+             * DTO-required fields are enforced. An explicit skipMissingProperties still wins.
+             */
+            dto?: Type<unknown>;
         } & RouteBaseOption &
             SaveOptions & {
                 hooks?: LifecycleHooks;
@@ -267,6 +275,13 @@ export interface CrudOptions {
              * @default true for UPDATE operations
              */
             skipMissingProperties?: boolean;
+
+            /**
+             * DTO class to validate the request body against, instead of the entity.
+             * Persistence still uses the entity. UPDATE keeps PATCH semantics
+             * (skipMissingProperties defaults to true) even with a DTO.
+             */
+            dto?: Type<unknown>;
         } & RouteBaseOption &
             SaveOptions & {
                 hooks?: LifecycleHooks;
@@ -322,6 +337,13 @@ export interface CrudOptions {
              * @default true for UPSERT operations
              */
             skipMissingProperties?: boolean;
+
+            /**
+             * DTO class to validate the request body against, instead of the entity.
+             * Persistence still uses the entity. UPSERT keeps PATCH semantics
+             * (skipMissingProperties defaults to true) even with a DTO.
+             */
+            dto?: Type<unknown>;
         } & RouteBaseOption &
             SaveOptions & {
                 hooks?: LifecycleHooks;

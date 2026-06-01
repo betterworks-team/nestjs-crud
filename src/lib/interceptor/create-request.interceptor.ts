@@ -87,18 +87,18 @@ export function CreateRequestInterceptor(crudOptions: CrudOptions, factoryOption
             // 🎯 allowedParams 추출 (메서드별 우선, 전역 fallback)
             const allowedParams = methodOptions.allowedParams ?? crudOptions.allowedParams;
 
-            // 🚀 동적 검증 메타데이터 생성
             try {
-                // 임포트 추가 필요하지만 일단 기존 검증 방식 사용하면서 로깅 강화
-                const transformed = plainToInstance(crudOptions.entity as ClassConstructor<EntityType>, body);
+                // dto가 지정되면 엔티티 대신 DTO로 검증한다 (저장은 항상 엔티티 형태로 진행).
+                const dto = methodOptions.dto as ClassConstructor<object> | undefined;
+                const validationTarget = (dto ?? crudOptions.entity) as ClassConstructor<EntityType>;
+                const transformed = plainToInstance(validationTarget, body);
 
-                // Priority: method-specific > global > default (true, aligned with UPDATE/UPSERT).
-                // CREATE validates the entity directly, and entity optional fields usually lack
-                // @IsOptional (the entity doubles as the persistence model), so a strict default
-                // (false) turns every missing field into a "required on create" error and breaks
-                // empty/partial creates. Consumers that need strict required-field enforcement can
-                // opt out per-route with `skipMissingProperties: false`.
-                const skipMissingProperties = methodOptions.skipMissingProperties ?? crudOptions.skipMissingProperties ?? true;
+                // Priority: method-specific > global > default.
+                // 기본값: dto가 있으면 false(strict) — DTO가 필수/선택을 @IsOptional로 명시하므로
+                // CREATE에서 필수값을 강제하는 게 자연스럽다. dto가 없으면 true(lenient, 0.4.1) —
+                // 엔티티를 입력 DTO로 재사용하는 특성상 누락 필드를 "생성 시 필수"로 둔갑시키지 않기 위함.
+                const skipMissingProperties =
+                    methodOptions.skipMissingProperties ?? crudOptions.skipMissingProperties ?? (dto ? false : true);
 
                 const errorList = await validate(transformed, {
                     whitelist: true,
@@ -112,7 +112,8 @@ export function CreateRequestInterceptor(crudOptions: CrudOptions, factoryOption
                     throw new UnprocessableEntityException(errorList);
                 }
 
-                return transformed;
+                // dto로 검증했으면 transformed는 DTO 인스턴스이므로, 저장용으로 엔티티에 매핑한다.
+                return dto ? plainToInstance(crudOptions.entity as ClassConstructor<EntityType>, body) : transformed;
             } catch (error) {
                 throw error;
             }

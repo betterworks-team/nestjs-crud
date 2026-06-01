@@ -141,7 +141,10 @@ export function UpsertRequestInterceptor(crudOptions: CrudOptions, factoryOption
             const allowedParams = methodOptions.allowedParams ?? crudOptions.allowedParams;
 
             try {
-                const transformed = plainToInstance(crudOptions.entity as unknown as ClassConstructor<EntityType>, body);
+                // dto가 지정되면 엔티티 대신 DTO로 검증한다 (UPSERT는 PATCH 의미라 lenient 유지).
+                const dto = methodOptions.dto as ClassConstructor<object> | undefined;
+                const validationTarget = (dto ?? crudOptions.entity) as unknown as ClassConstructor<EntityType>;
+                const transformed = plainToInstance(validationTarget, body);
 
                 // Priority: method-specific > global > default (true for UPSERT)
                 const skipMissingProperties = methodOptions.skipMissingProperties ?? crudOptions.skipMissingProperties ?? true;
@@ -158,7 +161,8 @@ export function UpsertRequestInterceptor(crudOptions: CrudOptions, factoryOption
                     throw new UnprocessableEntityException(errorList);
                 }
 
-                return transformed;
+                // dto로 검증했으면 저장용으로 엔티티에 매핑한다.
+                return dto ? plainToInstance(crudOptions.entity as unknown as ClassConstructor<EntityType>, body) : transformed;
             } catch (error) {
                 throw error;
             }

@@ -1,6 +1,6 @@
 {
     "name": "@betterworks-team/nestjs-crud",
-    "version": "0.4.1",
+    "version": "0.5.0",
     "description": "Automatically generate CRUD Rest API based on NestJS and TypeOrm",
     "homepage": "https://github.com/betterworks-team/nestjs-crud",
     "repository": {

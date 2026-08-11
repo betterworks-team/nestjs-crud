@@ -289,6 +289,7 @@ class MetadataCacheManager {
         this.pruneTimer = setInterval(() => {
             this.pruneExpiredEntries();
         }, this.config.pruneInterval);
+        this.pruneTimer.unref();
     }
 
     /**

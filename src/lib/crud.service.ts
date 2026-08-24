@@ -881,9 +881,10 @@ export class CrudService<T extends EntityType> {
                 throw new NotFoundException(`Entities not found: ${missingIds.join(', ')}`);
             }
 
-            // 6. Process updates with hooks
+            // 6. Process updates with hooks (단건 update와 동일한 계약: assignBefore -> assignAfter -> saveBefore -> save -> saveAfter)
+            const itemContexts: HookContext<T>[] = [];
             const entitiesToUpdate = await Promise.all(
-                crudUpdateRequest.body.map(async (item) => {
+                crudUpdateRequest.body.map(async (item, index) => {
                     const { id, ...updateData } = item;
                     const entityId = id || item[primaryKeyName];
                     const entity = entityMap.get(entityId)!;
@@ -896,6 +897,7 @@ export class CrudService<T extends EntityType> {
                         controller: this.controllerInstance,
                         request: crudUpdateRequest.request,
                     };
+                    itemContexts[index] = context;
 
                     // OneToMany 배열을 수동으로 교체 (기존 배열 객체 유지)
                     this.replaceOneToManyArrays(entity, updateData as DeepPartial<T>);
@@ -906,10 +908,26 @@ export class CrudService<T extends EntityType> {
                     // OneToMany 관계의 nested entities에 부모 ID를 설정 (assign 후)
                     this.setParentReferencesOnEntity(entity);
 
-                    // Execute hooks
-                    let processedEntity = entity;
-                    // No configuration-based hooks
-                    // No configuration-based hooks
+                    // Execute hooks (단건 UPDATE와 동일: assignBefore는 body가 아닌 entity를 받아 entity를 반환)
+                    let processedEntity: T = entity;
+                    if (crudUpdateRequest.hooks?.assignBefore) {
+                        processedEntity = (await crudUpdateRequest.hooks.assignBefore(entity, context)) as T;
+                    }
+
+                    if (crudUpdateRequest.hooks?.assignAfter) {
+                        processedEntity = await crudUpdateRequest.hooks.assignAfter(
+                            processedEntity,
+                            updateData as DeepPartial<T>,
+                            context,
+                        );
+                    }
+
+                    // 훅 실행 후 다시 FK 설정 (훅에서 배열이 교체되었을 수 있음)
+                    this.setParentReferencesOnEntity(processedEntity);
+
+                    if (crudUpdateRequest.hooks?.saveBefore) {
+                        processedEntity = await crudUpdateRequest.hooks.saveBefore(processedEntity, context);
+                    }
 
                     // save 직전 최종 FK 설정
                     this.setParentReferencesOnEntity(processedEntity);
@@ -921,16 +939,14 @@ export class CrudService<T extends EntityType> {
             return this.repository
                 .save(entitiesToUpdate, crudUpdateRequest.saveOptions)
                 .then(async (updatedEntities) => {
-                    // Execute saveAfter hook for each entity
+                    // Execute saveAfter hook for each entity (단건 update와 동일하게 assign 단계의 context를 재사용)
                     const processedEntities = await Promise.all(
                         updatedEntities.map(async (entity, index) => {
-                            const context: HookContext<T> = {
-                                operation: 'update' as Method,
-                                params: { [this.primaryKey[0]]: crudUpdateRequest.body[index].id },
-                                controller: this.controllerInstance,
-                                request: crudUpdateRequest.request,
-                            };
-                            const afterSaveEntity = entity;
+                            const context = itemContexts[index];
+                            let afterSaveEntity: T = entity;
+                            if (crudUpdateRequest.hooks?.saveAfter) {
+                                afterSaveEntity = await crudUpdateRequest.hooks.saveAfter(entity, context);
+                            }
                             return this.excludeEntity(afterSaveEntity, crudUpdateRequest.exclude);
                         }),
                     );

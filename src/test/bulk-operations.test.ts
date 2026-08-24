@@ -56,6 +56,21 @@ class TestUserController {
     constructor(public readonly crudService: TestUserService) {}
 }
 
+// destroy.softDelete: true인 경우에만 RECOVER 라우트가 생성되므로(crud.route.factory.ts),
+// soft delete/recover 관련 테스트는 이 컨트롤러를 사용하는 별도 앱에서 실행한다.
+@Controller('soft-delete-users')
+@Crud({
+    entity: TestUser,
+    routes: {
+        destroy: {
+            softDelete: true,
+        },
+    },
+})
+class SoftDeleteController {
+    constructor(public readonly crudService: TestUserService) {}
+}
+
 describe('Bulk Operations Tests', () => {
     let app: INestApplication;
     let userService: TestUserService;
@@ -192,10 +207,12 @@ describe('Bulk Operations Tests', () => {
                 { name: 'New User 2', email: 'new2@example.com' }, // Create
             ];
 
+            // PUT은 Nest 기본 상태코드가 200이며, 단건 upsert(PUT /:id)도 동일하게 200을 반환한다
+            // (auto-parent-reference.test.ts 참고). bulk upsert도 같은 HTTP 메서드 규약을 따른다.
             const response = await request(app.getHttpServer())
                 .put('/test-users/bulk')
                 .send(upsertData)
-                .expect(201);
+                .expect(200);
 
             expect(response.body.data).toHaveLength(3);
             expect(response.body.metadata.affectedCount).toBe(3);
@@ -235,20 +252,6 @@ describe('Bulk Operations Tests', () => {
         });
 
         it('should soft delete multiple users when configured', async () => {
-            // Create controller with soft delete enabled
-            @Controller('soft-delete-users')
-            @Crud({
-                entity: TestUser,
-                routes: {
-                    destroy: {
-                        softDelete: true,
-                    },
-                },
-            })
-            class SoftDeleteController {
-                constructor(public readonly crudService: TestUserService) {}
-            }
-
             const module = await Test.createTestingModule({
                 imports: [
                     TypeOrmModule.forRoot({
@@ -292,21 +295,51 @@ describe('Bulk Operations Tests', () => {
     });
 
     describe('Bulk RECOVER Operations', () => {
+        // RECOVER 라우트는 destroy.softDelete: true일 때만 생성되므로(crud.route.factory.ts createMethod),
+        // 이 describe 블록은 SoftDeleteController를 사용하는 전용 앱에서 실행한다.
+        let recoverApp: INestApplication;
+        let recoverService: TestUserService;
+
+        beforeAll(async () => {
+            const module = await Test.createTestingModule({
+                imports: [
+                    TypeOrmModule.forRoot({
+                        type: 'sqlite',
+                        database: ':memory:',
+                        entities: [TestUser],
+                        synchronize: true,
+                        logging: false,
+                    }),
+                    TypeOrmModule.forFeature([TestUser]),
+                ],
+                controllers: [SoftDeleteController],
+                providers: [TestUserService],
+            }).compile();
+
+            recoverApp = module.createNestApplication();
+            await recoverApp.init();
+            recoverService = module.get<TestUserService>(TestUserService);
+        });
+
+        afterAll(async () => {
+            await recoverApp.close();
+        });
+
         it('should recover multiple soft-deleted users', async () => {
             // First soft delete some users
-            const users = await userService.repository.save([
+            const users = await recoverService.repository.save([
                 { name: 'Deleted 1', email: 'del1@example.com' },
                 { name: 'Deleted 2', email: 'del2@example.com' },
                 { name: 'Active User', email: 'active@example.com' },
             ]);
 
             // Soft delete first two
-            await userService.repository.softRemove(users.slice(0, 2));
+            await recoverService.repository.softRemove(users.slice(0, 2));
 
             const idsToRecover = users.slice(0, 2).map(u => u.id);
 
-            const response = await request(app.getHttpServer())
-                .post('/test-users/bulk/recover')
+            const response = await request(recoverApp.getHttpServer())
+                .post('/soft-delete-users/bulk/recover')
                 .send({ ids: idsToRecover })
                 .expect(201);
 
@@ -315,13 +348,13 @@ describe('Bulk Operations Tests', () => {
             expect(response.body.metadata.wasSoftDeleted).toBe(true);
 
             // Verify recovery
-            const allUsers = await userService.repository.find();
+            const allUsers = await recoverService.repository.find();
             expect(allUsers).toHaveLength(3);
         });
 
         it('should handle not found entities in bulk recover', async () => {
-            const response = await request(app.getHttpServer())
-                .post('/test-users/bulk/recover')
+            await request(recoverApp.getHttpServer())
+                .post('/soft-delete-users/bulk/recover')
                 .send({ ids: [999, 1000] })
                 .expect(404);
         });

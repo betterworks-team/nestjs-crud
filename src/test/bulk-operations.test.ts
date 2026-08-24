@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { Controller, INestApplication } from '@nestjs/common';
+import { Controller, ForbiddenException, INestApplication } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Entity, PrimaryGeneratedColumn, Column, DeleteDateColumn } from 'typeorm';
 import { IsString, IsEmail, IsOptional } from 'class-validator';
@@ -406,6 +406,171 @@ describe('Bulk Operations Tests', () => {
             expect(updateResponse.body.data[1].bio).toBe('Updated #2');
 
             await hookApp.close();
+        });
+
+        it('should pass per-item context (params id, currentEntity, same request) and reflect hook-returned entity in save', async () => {
+            const receivedContexts: Array<{ params: any; currentEntityId: any; request: any }> = [];
+
+            @Controller('hook-context-users')
+            @Crud({
+                entity: TestUser,
+                allowedParams: ['name', 'email', 'bio'],
+                routes: {
+                    update: {
+                        hooks: {
+                            assignBefore: async (entity: TestUser, context) => {
+                                receivedContexts.push({
+                                    params: context.params,
+                                    currentEntityId: (context.currentEntity as TestUser)?.id,
+                                    request: context.request,
+                                });
+                                // 훅에서 반환한 엔티티가 save에 반영되는지 검증하기 위해 값 변경
+                                entity.bio = `hook-set-${entity.id}`;
+                                return entity;
+                            },
+                        },
+                    },
+                },
+            })
+            class HookContextController {
+                constructor(public readonly crudService: TestUserService) {}
+            }
+
+            const module = await Test.createTestingModule({
+                imports: [
+                    TypeOrmModule.forRoot({
+                        type: 'sqlite',
+                        database: ':memory:',
+                        entities: [TestUser],
+                        synchronize: true,
+                        logging: false,
+                    }),
+                    TypeOrmModule.forFeature([TestUser]),
+                ],
+                controllers: [HookContextController],
+                providers: [TestUserService],
+            }).compile();
+
+            const contextApp = module.createNestApplication();
+            await contextApp.init();
+            const service = module.get<TestUserService>(TestUserService);
+
+            const created = await service.repository.save([
+                { name: 'Ctx 1', email: 'ctx1@example.com' },
+                { name: 'Ctx 2', email: 'ctx2@example.com' },
+            ]);
+
+            const response = await request(contextApp.getHttpServer())
+                .patch('/hook-context-users/bulk')
+                .send([
+                    { id: created[0].id, name: 'Ctx Updated 1' },
+                    { id: created[1].id, name: 'Ctx Updated 2' },
+                ])
+                .expect(200);
+
+            // 항목 수만큼 훅이 호출되어야 함
+            expect(receivedContexts).toHaveLength(2);
+
+            // 각 항목의 context.params가 해당 id를 담고 있어야 함
+            expect(receivedContexts[0].params).toEqual({ id: created[0].id });
+            expect(receivedContexts[1].params).toEqual({ id: created[1].id });
+
+            // 각 항목의 context.currentEntity가 해당 엔티티여야 함
+            expect(receivedContexts[0].currentEntityId).toBe(created[0].id);
+            expect(receivedContexts[1].currentEntityId).toBe(created[1].id);
+
+            // 모든 항목이 원본 request 객체를 동일하게 참조해야 함 (컨슈머가 request.body로 원본 배열을 볼 수 있도록)
+            expect(receivedContexts[0].request).toBeDefined();
+            expect(receivedContexts[0].request).toBe(receivedContexts[1].request);
+            expect(Array.isArray(receivedContexts[0].request.body)).toBe(true);
+
+            // 훅에서 반환한 엔티티가 저장 결과에 반영되어야 함
+            expect(response.body.data[0].bio).toBe(`hook-set-${created[0].id}`);
+            expect(response.body.data[1].bio).toBe(`hook-set-${created[1].id}`);
+
+            await contextApp.close();
+        });
+
+        it('should propagate an exception thrown from a bulk update hook (ownership check scenario)', async () => {
+            @Controller('hook-guard-users')
+            @Crud({
+                entity: TestUser,
+                allowedParams: ['name', 'email', 'bio'],
+                routes: {
+                    update: {
+                        hooks: {
+                            assignBefore: async (entity: TestUser, context) => {
+                                // 배열 body로 컨트롤러 설정 훅을 우회할 수 없어야 함 — 소유권 검증 시나리오
+                                if (context.currentEntity && (context.currentEntity as TestUser).name === 'Forbidden') {
+                                    throw new ForbiddenException('ownership check failed');
+                                }
+                                return entity;
+                            },
+                        },
+                    },
+                },
+            })
+            class HookGuardController {
+                constructor(public readonly crudService: TestUserService) {}
+            }
+
+            const module = await Test.createTestingModule({
+                imports: [
+                    TypeOrmModule.forRoot({
+                        type: 'sqlite',
+                        database: ':memory:',
+                        entities: [TestUser],
+                        synchronize: true,
+                        logging: false,
+                    }),
+                    TypeOrmModule.forFeature([TestUser]),
+                ],
+                controllers: [HookGuardController],
+                providers: [TestUserService],
+            }).compile();
+
+            const guardApp = module.createNestApplication();
+            await guardApp.init();
+            const service = module.get<TestUserService>(TestUserService);
+
+            const created = await service.repository.save([
+                { name: 'Allowed', email: 'allowed@example.com' },
+                { name: 'Forbidden', email: 'forbidden@example.com' },
+            ]);
+
+            await request(guardApp.getHttpServer())
+                .patch('/hook-guard-users/bulk')
+                .send([
+                    { id: created[0].id, bio: 'should not persist either' },
+                    { id: created[1].id, bio: 'hacked' },
+                ])
+                .expect(403);
+
+            // 훅 예외로 요청 전체가 실패했으므로 아무 것도 저장되지 않아야 함
+            const untouched = await service.repository.findOne({ where: { id: created[1].id } as any });
+            expect(untouched?.bio).toBeNull();
+
+            await guardApp.close();
+        });
+
+        it('should preserve existing behavior for bulk update when no hooks are configured', async () => {
+            // 훅이 정의되지 않은 컨트롤러(TestUserController)는 기존 동작(성능 최적화 포함) 그대로 유지되어야 함
+            const created = await userService.repository.save([
+                { name: 'No Hook 1', email: 'nohook1@example.com' },
+                { name: 'No Hook 2', email: 'nohook2@example.com' },
+            ]);
+
+            const response = await request(app.getHttpServer())
+                .patch('/test-users/bulk')
+                .send([
+                    { id: created[0].id, name: 'No Hook 1 Updated' },
+                    { id: created[1].id, name: 'No Hook 2 Updated' },
+                ])
+                .expect(200);
+
+            expect(response.body.data).toHaveLength(2);
+            expect(response.body.data[0].name).toBe('No Hook 1 Updated');
+            expect(response.body.data[1].name).toBe('No Hook 2 Updated');
         });
     });
 

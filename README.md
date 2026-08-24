@@ -478,6 +478,91 @@ POST /users/recover
 
 **Note**: All bulk operations support lifecycle hooks and will execute them for each item in the batch.
 
+#### ⚠️ Bulk Operations & Hook Parallelism Contract
+
+For bulk `create` / `update` / `upsert` / `recover` requests, configuration hooks
+(`assignBefore`, `assignAfter`, `saveBefore`, `saveAfter`, `recoverBefore`, `recoverAfter`)
+are executed **per item, in parallel** via `Promise.all` — not sequentially in array order.
+
+```typescript
+hooks: {
+    assignBefore: async (body, context) => {
+        // Runs once per item in the batch, concurrently with the other items.
+        // Do NOT rely on execution order between items, and do NOT share/mutate
+        // state across items (e.g. an in-memory counter or "previous item" cache).
+        return body;
+    },
+},
+```
+
+Implications:
+
+-   **No cross-item ordering guarantees.** Item 0's hook may finish before or after item 2's.
+-   **Hooks must be item-local.** Each hook invocation should only read/write the `body`/`entity`
+    and `context` it was given — never assume another item's hook has already run.
+-   **Side effects must be idempotent/order-independent** (e.g. writing to an external service,
+    incrementing a shared counter) since concurrent execution can interleave arbitrarily.
+-   This is the current (since `0.5.1`) and intended behavior. A sequential/opt-in mode may be
+    added later if a real use case requires strict per-item ordering — it does not exist today.
+
+#### ⚠️ Upgrade notes: behavior changes to review (`0.5.2`)
+
+`0.5.2` changes two observable behaviors compared to earlier `0.5.x` releases. Both are
+correctness fixes, but either one can change what your existing consumers experience — review
+both before upgrading.
+
+1. **Bulk `upsert` now preserves the primary key, so it can UPDATE existing rows.**
+
+    Before this fix:
+
+    -   With `allowedParams` configured, the primary key was stripped from each bulk upsert item,
+        so every item was always treated as a **new INSERT** (never matched an existing row).
+    -   Without `allowedParams`, sending a primary key in a bulk upsert body was **always rejected
+        with 422**.
+
+    Since this fix:
+
+    -   The primary key field is no longer filtered out. If an item's body includes a primary key
+        that matches an existing row, that row is **updated**. If the primary key does not match
+        an existing row, a **new row is inserted using the client-supplied primary key** (instead
+        of a server-generated one).
+
+    **Who is affected:** any consumer exposing bulk `upsert` without a hook/guard that validates
+    or authorizes the primary key in the request body. Previously such an endpoint could only ever
+    create new rows with server-assigned ids; after upgrading, an authenticated client can now
+    overwrite (or insert-with-arbitrary-id) any row it can address by primary key.
+
+    **What to check before upgrading:** if you expose bulk `upsert`, add an `assignBefore` /
+    `saveBefore` hook (or a guard) that verifies the caller is allowed to write the primary key(s)
+    present in the request body, or restrict/remove `allowedParams` entries for the primary key
+    field if client-controlled upserts-by-id are not intended for that resource.
+
+    **Composite primary keys:** this behavior assumes a single-column primary key. The request
+    interceptor preserves *all* primary key fields on the body, but existing-row matching only
+    uses the first primary key component. On a resource with a composite primary key, bulk
+    `upsert` can therefore match and **update the wrong row** if only the first component
+    happens to coincide with an existing row. Do not expose bulk `upsert` on composite-primary-key
+    resources without a hook/guard that validates the full key, or exclude them from bulk `upsert`
+    entirely.
+
+2. **`SHOW` now runs configuration hooks (`assignBefore` / `assignAfter`).**
+
+    Before this fix, hooks configured under `routes[Method.SHOW].hooks` (or the equivalent
+    `@BeforeShow()` / `@AfterShow()` decorators) were **not executed** — they were silently
+    dormant.
+
+    Since this fix, these hooks run on every `SHOW` request, consistent with `create` / `update` /
+    `upsert` / `destroy` / `recover`.
+
+    **Who is affected:** any consumer that already configured `show` hooks (expecting them to be
+    dormant, or added defensively for future use) will see them **start executing automatically**
+    on upgrade — no code change is required to trigger this.
+
+    **What to check before upgrading:** search your codebase for `hooks` under `Method.SHOW` /
+    `@BeforeShow()` / `@AfterShow()` and confirm the hook body is safe to run in production (e.g.
+    it doesn't assume it's unreachable, and it doesn't skip returning a value — see the note above
+    about hooks that return `undefined` being treated as "no change").
+
 ## 🔍 RESTful Query Parameters
 
 ### 📋 Filtering
@@ -981,6 +1066,8 @@ Execute custom logic at each stage of CRUD operations through lifecycle hooks.
 | `recoverAfter`  | **After** entity recovery  | Audit logs, notifications        | recover                       |
 
 **Note**: For `show` operation, `assignBefore` processes query parameters before entity lookup, and `assignAfter` processes the retrieved entity before returning it.
+
+**Note**: For bulk operations (arrays of items), these hooks run **per item, in parallel** — see [Bulk Operations & Hook Parallelism Contract](#️-bulk-operations--hook-parallelism-contract).
 
 #### 🎯 Method 1: Decorator Approach (NEW! 🆕 Recommended)
 

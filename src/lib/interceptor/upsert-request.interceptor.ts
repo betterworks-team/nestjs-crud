@@ -38,14 +38,20 @@ export function UpsertRequestInterceptor(crudOptions: CrudOptions, factoryOption
                     throw new UnprocessableEntityException('Body must be an array for bulk upsert operations');
                 }
                 
+                // 대량 upsert 항목은 기존 레코드를 식별하기 위해 primary key를 body에 담아 보낸다.
+                // allowedParams 필터링에서 primary key까지 함께 걸러지면 항상 '신규 생성'으로 오인되므로
+                // primary key 필드는 필터링 대상에서 제외해 보존한다.
+                const primaryKeyNames = (factoryOption.primaryKeys ?? []).map((primaryKey) => primaryKey.name);
+
                 if (allowedParams) {
-                    req.body = req.body.map((item: any) => 
-                        typeof item === 'object' && item !== null ? this.filterAllowedParams(item, allowedParams) : item
+                    const allowedWithPrimaryKeys = [...allowedParams, ...primaryKeyNames];
+                    req.body = req.body.map((item: any) =>
+                        typeof item === 'object' && item !== null ? this.filterAllowedParams(item, allowedWithPrimaryKeys) : item
                     );
                 }
-                
+
                 const validatedBodies = await Promise.all(
-                    req.body.map((item: any) => this.validateBody(item, upsertOptions))
+                    req.body.map((item: any) => this.validateBody(item, upsertOptions, true))
                 );
                 
                 const crudUpsertManyRequest: CrudUpsertManyRequest<typeof crudOptions.entity> = {
@@ -119,7 +125,7 @@ export function UpsertRequestInterceptor(crudOptions: CrudOptions, factoryOption
             return filtered;
         }
 
-        async validateBody(body: unknown, methodOptions: any = {}) {
+        async validateBody(body: unknown, methodOptions: any = {}, isBulk = false) {
             if (_.isNil(body) || !_.isObject(body)) {
                 throw new UnprocessableEntityException('Body must be a valid object');
             }
@@ -127,8 +133,10 @@ export function UpsertRequestInterceptor(crudOptions: CrudOptions, factoryOption
             const bodyKeys = Object.keys(body);
 
             // Primary key 체크
+            // 단건 upsert는 URL 파라미터로 식별자를 받으므로 body에 primary key가 오면 거부한다.
+            // 대량 upsert는 각 항목이 생성/수정 대상을 스스로 식별해야 하므로 body의 primary key를 허용한다.
             const bodyContainsPrimaryKey = (factoryOption.primaryKeys ?? []).some((primaryKey) => bodyKeys.includes(primaryKey.name));
-            if (bodyContainsPrimaryKey) {
+            if (bodyContainsPrimaryKey && !isBulk) {
                 const primaryKeyNames = (factoryOption.primaryKeys ?? []).map((key) => key.name);
 
                 this.crudLogger.log(
@@ -159,6 +167,17 @@ export function UpsertRequestInterceptor(crudOptions: CrudOptions, factoryOption
                 if (errorList.length > 0) {
                     this.crudLogger.log(errorList, 'ValidationError');
                     throw new UnprocessableEntityException(errorList);
+                }
+
+                // class-validator의 whitelist:true는 검증 데코레이터가 없는 필드(예: primary key)를
+                // transformed 인스턴스에서 제거한다. 대량 upsert는 그 값으로 기존 레코드를 식별해야 하므로
+                // 원본 body에서 다시 채워 넣는다.
+                if (isBulk && bodyContainsPrimaryKey) {
+                    for (const primaryKey of factoryOption.primaryKeys ?? []) {
+                        if (primaryKey.name in (body as Record<string, unknown>)) {
+                            (transformed as Record<string, unknown>)[primaryKey.name] = (body as Record<string, unknown>)[primaryKey.name];
+                        }
+                    }
                 }
 
                 // dto로 검증했으면 저장용으로 엔티티에 매핑한다.

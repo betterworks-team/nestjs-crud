@@ -160,8 +160,18 @@ describe('[TypeORM Relation Loading Bug] ManyToMany + OneToMany 동시 로딩', 
         await app.close();
     });
 
-    // beforeEach는 FK 제약조건 문제로 제거
-    // 각 테스트가 독립적으로 실행됨
+    // 테스트 간 상태가 누적되면(예: readMany 테스트가 이전 테스트의 Profile까지 조회) 개수 검증이
+    // 깨진다. 단순 repository.delete({})는 FK 제약조건 때문에 실패하므로, 자식 테이블 -> 부모 테이블
+    // 순서로 지워 각 테스트를 독립적으로 실행한다.
+    beforeEach(async () => {
+        const manager = profileService.repository.manager;
+        await manager.query('PRAGMA foreign_keys = OFF');
+        await manager.query('DELETE FROM relation_bug_profile_jobs');
+        await manager.query('DELETE FROM relation_bug_profile_experiences');
+        await manager.query('DELETE FROM relation_bug_jobs');
+        await manager.query('DELETE FROM relation_bug_profiles');
+        await manager.query('PRAGMA foreign_keys = ON');
+    });
 
     describe('관계 로딩 버그 재현', () => {
         it('should load both ManyToMany (jobs) and OneToMany (profileExperiences) correctly', async () => {

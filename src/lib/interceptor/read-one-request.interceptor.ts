@@ -58,6 +58,7 @@ export function ReadOneRequestInterceptor(crudOptions: CrudOptions, factoryOptio
                 excludedColumns: readOneOptions.exclude,
                 softDeleted,
                 relations: [...new Set([...includeRelations, ...this.getRelations(customReadOneRequestOptions)])],
+                hooks: readOneOptions.hooks,
                 request: req,
             };
 

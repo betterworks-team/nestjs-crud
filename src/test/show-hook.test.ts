@@ -392,6 +392,139 @@ describe('Show Operation Hooks', () => {
         });
     });
 
+    describe('hooks returning undefined', () => {
+        it('should keep the previous value when assignBefore returns undefined (no unconditional findOne)', async () => {
+            @Controller('users-with-undefined-before-hook')
+            @Crud({
+                entity: TestUser,
+                routes: {
+                    [Method.SHOW]: {
+                        hooks: {
+                            assignBefore: async (_params, _context) => {
+                                // 값을 명시적으로 반환하지 않음 (실수로 return을 빼먹은 경우를 시뮬레이션)
+                                return undefined as any;
+                            },
+                        },
+                    },
+                },
+            })
+            class TestController {
+                constructor(public readonly crudService: CrudService<TestUser>) {}
+            }
+
+            @Module({
+                imports: [TypeOrmModule.forFeature([TestUser])],
+                controllers: [TestController],
+                providers: [
+                    {
+                        provide: CrudService,
+                        useFactory: (repository) => new CrudService(repository),
+                        inject: ['TestUserRepository'],
+                    },
+                ],
+            })
+            class TestModuleWithUndefinedBeforeHook {}
+
+            const moduleFixture = await Test.createTestingModule({
+                imports: [
+                    TypeOrmModule.forRoot({
+                        type: 'sqlite',
+                        database: ':memory:',
+                        entities: [TestUser],
+                        synchronize: true,
+                        logging: false,
+                    }),
+                    TestModuleWithUndefinedBeforeHook,
+                ],
+            }).compile();
+
+            const testApp = moduleFixture.createNestApplication();
+            await testApp.init();
+
+            // 테스트 데이터 생성
+            const repository = moduleFixture.get('TestUserRepository');
+            const user = await repository.save({
+                name: 'Test User',
+                email: 'test@example.com',
+            });
+
+            const response = await request(testApp.getHttpServer())
+                .get(`/users-with-undefined-before-hook/${user.id}`)
+                .expect(200);
+
+            expect(response.body.data.id).toBe(user.id);
+            expect(response.body.data.name).toBe('Test User');
+
+            await testApp.close();
+        });
+
+        it('should keep the retrieved entity when assignAfter returns undefined', async () => {
+            @Controller('users-with-undefined-after-hook')
+            @Crud({
+                entity: TestUser,
+                routes: {
+                    [Method.SHOW]: {
+                        hooks: {
+                            assignAfter: async (_entity, _params, _context) => {
+                                // 값을 명시적으로 반환하지 않음
+                                return undefined as any;
+                            },
+                        },
+                    },
+                },
+            })
+            class TestController {
+                constructor(public readonly crudService: CrudService<TestUser>) {}
+            }
+
+            @Module({
+                imports: [TypeOrmModule.forFeature([TestUser])],
+                controllers: [TestController],
+                providers: [
+                    {
+                        provide: CrudService,
+                        useFactory: (repository) => new CrudService(repository),
+                        inject: ['TestUserRepository'],
+                    },
+                ],
+            })
+            class TestModuleWithUndefinedAfterHook {}
+
+            const moduleFixture = await Test.createTestingModule({
+                imports: [
+                    TypeOrmModule.forRoot({
+                        type: 'sqlite',
+                        database: ':memory:',
+                        entities: [TestUser],
+                        synchronize: true,
+                        logging: false,
+                    }),
+                    TestModuleWithUndefinedAfterHook,
+                ],
+            }).compile();
+
+            const testApp = moduleFixture.createNestApplication();
+            await testApp.init();
+
+            // 테스트 데이터 생성
+            const repository = moduleFixture.get('TestUserRepository');
+            const user = await repository.save({
+                name: 'Test User',
+                email: 'test@example.com',
+            });
+
+            const response = await request(testApp.getHttpServer())
+                .get(`/users-with-undefined-after-hook/${user.id}`)
+                .expect(200);
+
+            expect(response.body.data.id).toBe(user.id);
+            expect(response.body.data.name).toBe('Test User');
+            expect(response.body.data.email).toBe('test@example.com');
+
+            await testApp.close();
+        });
+    });
+
     describe('without hooks', () => {
         it('should work normally without hooks defined', async () => {
             @Controller('users-without-hooks')

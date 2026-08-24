@@ -553,8 +553,17 @@ export class CrudService<T extends EntityType> {
             request: crudReadOneRequest.request,
         };
 
-        // 2. No configuration-based hooks anymore
-        const processedParams = crudReadOneRequest.params;
+        // 2. assignBefore 훅 실행 (조회 파라미터 가공)
+        // 훅이 undefined를 반환하면(값을 명시적으로 바꾸지 않은 경우) 직전 값을 그대로 유지한다.
+        // 그렇지 않으면 조건 없는 findOne({ where: undefined })가 되어 TypeORM 0.3에서 500이 발생한다.
+        let processedParams = crudReadOneRequest.params;
+        if (crudReadOneRequest.hooks?.assignBefore) {
+            const hookResult = (await crudReadOneRequest.hooks.assignBefore(
+                processedParams as unknown as DeepPartial<T>,
+                context,
+            )) as unknown as typeof processedParams;
+            processedParams = hookResult !== undefined ? hookResult : processedParams;
+        }
 
         // 3. 엔티티 조회
         // 중첩된 관계가 있어도 repository.findOne을 사용 (TypeORM이 올바르게 처리함)
@@ -571,8 +580,13 @@ export class CrudService<T extends EntityType> {
             throw new NotFoundException();
         }
 
-        // 4. No configuration-based hooks anymore
-        const processedEntity = entity;
+        // 4. assignAfter 훅 실행 (조회된 엔티티 가공)
+        // 훅이 undefined를 반환하면 직전 값(조회된 엔티티)을 유지한다.
+        let processedEntity = entity;
+        if (crudReadOneRequest.hooks?.assignAfter) {
+            const hookResult = await crudReadOneRequest.hooks.assignAfter(processedEntity, processedParams as DeepPartial<T>, context);
+            processedEntity = hookResult !== undefined ? hookResult : processedEntity;
+        }
 
         // 5. Transform entity to plain object to apply @Exclude decorators
         const transformedEntity = this.transformEntityToPlain(processedEntity);

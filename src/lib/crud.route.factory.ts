@@ -169,8 +169,12 @@ export class CrudRouteFactory {
             // 각 훅 타입별로 메서드들을 등록
             Object.entries(hooks).forEach(([hookType, hookMetadataList]) => {
                 // 여러 훅을 체인으로 실행하는 함수 생성
-                const chainedHookFunction = async (data: any, context: any) => {
-                    let result = data;
+                // 훅 타입마다 인자 개수가 다르다 (예: assignAfter는 (entity, body, context) 3개,
+                // 나머지는 (data, context) 2개). 마지막 인자를 항상 context로, 첫 인자를 체이닝 대상
+                // 데이터로 취급하고 중간 인자(body 등)는 그대로 전달해 시그니처를 보존한다.
+                const chainedHookFunction = async (...args: any[]) => {
+                    const context = args[args.length - 1];
+                    let result = args[0];
 
                     // context가 없으면 훅을 실행하지 않고 원래 데이터 반환
                     if (!context) {
@@ -187,7 +191,7 @@ export class CrudRouteFactory {
 
                         if (controllerInstance && typeof controllerInstance[methodName] === 'function') {
                             // Hook 실행 결과를 반드시 반환값으로 사용
-                            const hookResult = await controllerInstance[methodName](result, context);
+                            const hookResult = await controllerInstance[methodName](result, ...args.slice(1));
                             // Hook이 값을 반환하면 사용, 아니면 원래 값 유지
                             result = hookResult !== undefined ? hookResult : result;
                         }
@@ -200,19 +204,20 @@ export class CrudRouteFactory {
                 if (routeHooks[hookType]) {
                     // 기존 훅과 새로운 체인드 훅을 결합
                     const existingHook = routeHooks[hookType];
-                    routeHooks[hookType] = async (data: any, context: any) => {
+                    routeHooks[hookType] = async (...args: any[]) => {
+                        const context = args[args.length - 1];
                         // 기존 훅 먼저 실행
-                        let result = data;
+                        let result = args[0];
                         if (Array.isArray(existingHook)) {
                             for (const hook of existingHook) {
-                                result = await hook(result, context);
+                                result = await hook(result, ...args.slice(1));
                             }
                         } else {
-                            result = await existingHook(result, context);
+                            result = await existingHook(result, ...args.slice(1));
                         }
 
                         // 그 다음 새로운 체인드 훅 실행
-                        return await chainedHookFunction(result, context);
+                        return await chainedHookFunction(result, ...args.slice(1, -1), context);
                     };
                 } else {
                     routeHooks[hookType] = chainedHookFunction;
@@ -274,6 +279,10 @@ export class CrudRouteFactory {
 
     protected show<T>(controllerMethodName: string): void {
         this.targetPrototype[controllerMethodName] = function handleShow(crudReadOneRequest: CrudReadOneRequest<T>) {
+            // Set controller instance for hooks
+            if (this.crudService.setControllerInstance) {
+                this.crudService.setControllerInstance(this);
+            }
             return this.crudService.handleShow(crudReadOneRequest);
         };
     }

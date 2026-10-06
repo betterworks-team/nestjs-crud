@@ -366,6 +366,7 @@ export interface CrudOptions {
     };
     /**
      * An array of methods to generate routes for. If not specified, all routes will be generated.
+     * An empty array generates no routes.
      */
     only?: Array<Method | `${Method}`>;
 

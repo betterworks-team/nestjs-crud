@@ -505,6 +505,13 @@ Implications:
 -   This is the current (since `0.5.1`) and intended behavior. A sequential/opt-in mode may be
     added later if a real use case requires strict per-item ordering — it does not exist today.
 
+#### ⚠️ Upgrade notes: `only: []` generates no routes (`0.5.3`)
+
+`only: []` now generates **no** auto routes (previously an empty array was treated as "no
+restriction" and generated every route, exposing unintended endpoints). Omitting `only`
+still generates all routes. Consumers that relied on `only: []` to get every route should
+remove `only` instead.
+
 #### ⚠️ Upgrade notes: behavior changes to review (`0.5.2`)
 
 `0.5.2` changes two observable behaviors compared to earlier `0.5.x` releases. Both are
@@ -996,7 +1003,7 @@ GET /posts?include=profile               # ❌ All relations ignored (profile no
 @Controller('users')
 @Crud({
     entity: User,
-    only: ['index', 'show', 'create', 'update'], // Enable only specific methods
+    only: ['index', 'show', 'create', 'update'], // Enable only specific methods (omit = all routes, [] = no routes)
     allowedFilters: ['name', 'email', 'status'], // Allowed filter columns
     allowedParams: ['name', 'email', 'bio'], // Allowed request parameters
     allowedIncludes: ['department', 'posts'], // Allowed relation inclusions

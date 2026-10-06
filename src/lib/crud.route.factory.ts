@@ -550,7 +550,8 @@ export class CrudRouteFactory {
     }
 
     private enabledMethod(crudMethod: Method): boolean {
-        if (!Array.isArray(this.crudOptions.only) || this.crudOptions.only.length === 0) {
+        // `only` omitted -> every route. `only` given -> exactly those routes, so `only: []` -> none.
+        if (this.crudOptions.only === undefined) {
             return true;
         }
         return this.crudOptions.only.includes(crudMethod);
